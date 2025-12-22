@@ -1,122 +1,207 @@
-# app.R
+# app.R (versión reorganizada con llamadas a descarga/procesado y uso de leer_sepe_csv / leer_poblacion_csv / normalizar_ccaa)
 library(shiny)
 library(dplyr)
 library(ggplot2)
 library(tidyr)
-library(httr)
 library(scales)
 library(shinyjs)
 library(DT)
 
-
-# Definir la lista de años al inicio
+# Definir la lista de años al inicio (ajusta si hace falta)
 anios <- 2010:2024
 anios_titulos <- paste(min(anios), max(anios), sep = "–")
 
-source("preprocessing.R")
+# ------------------ Cargar scripts auxiliares ------------------
+# preprocessing.R: contiene funciones de descarga/procesado (descargar_datasets_sepe, descargar_y_procesar_poblacion)
+# read_data.R: contiene leer_sepe_csv(), leer_poblacion_csv(), normalizar_ccaa()
+if (file.exists("preprocessing.R")) source("preprocessing.R")
+if (file.exists("read_data.R"))    source("read_data.R")
+
 res <- descargar_datasets_sepe(anios = anios, dir_data = "data")
 res <- descargar_y_procesar_poblacion(codigos_ine = 2855:2907, dir_data = "data", anio_min = 2010, anio_max = 2025)
 
 
-# --------------------------------------------------------------------------------------
-# ---------- 2. UI (NAVBAR con páginas por gráfico) ----------
-# --------------------------------------------------------------------------------------
+# ------------------ UI ------------------
 ui <- navbarPage(
-  title = paste("SEPE — Datos por CCAA (", anios_titulos, ")"),
+  title = paste0("SEPE — Resumen (", anios_titulos, ")"),
   id = "main_nav",
   header = tagList(useShinyjs()),
 
-  tabPanel("Controles",
-           sidebarLayout(
-             sidebarPanel(
-               h4("Filtros generales"),
-               selectInput("ccaa_sel", "Comunidad Autónoma:", choices = NULL, selected = NULL),
-               selectInput("metrica_sel", "Métrica a visualizar:",
-                           choices = c("Paro Registrado" = "paro",
-                                       "Contratos Registrados" = "contratos",
-                                       "Demandantes de Empleo" = "dtes"),
-                           selected = "paro"),
-               checkboxGroupInput("ccaa_multi", "CCAA para comparativa (líneas):",
-                                  choices = NULL, selected = NULL, inline = FALSE),
-               width = 3
+  tabPanel("Portada",
+           fluidPage(
+             br(),
+             fluidRow(
+               column(3,
+                      tags$div(class = "card",
+                               tags$div(class = "card-body",
+                                        tags$h5("Año más reciente", class = "card-title"),
+                                        tags$h3(textOutput("card_year"), style = "margin-top:0;"),
+                                        tags$p("Año usado para indicadores", class = "card-text")
+                               )
+                      )
+               ),
+               column(3,
+                      tags$div(class = "card",
+                               tags$div(class = "card-body",
+                                        tags$h5("Paro total (último año)", class = "card-title"),
+                                        tags$h3(textOutput("card_paro_total")),
+                                        tags$p("Suma de Paro Registrado en todas las CCAA", class = "card-text")
+                               )
+                      )
+               ),
+               column(3,
+                      tags$div(class = "card",
+                               tags$div(class = "card-body",
+                                        tags$h5("Contratos (último año)", class = "card-title"),
+                                        tags$h3(textOutput("card_contratos_total")),
+                                        tags$p("Suma de contratos en todas las CCAA", class = "card-text")
+                               )
+                      )
+               ),
+               column(3,
+                      tags$div(class = "card",
+                               tags$div(class = "card-body",
+                                        tags$h5("Demandantes (último año)", class = "card-title"),
+                                        tags$h3(textOutput("card_dtes_total")),
+                                        tags$p("Suma de demandantes en todas las CCAA", class = "card-text")
+                               )
+                      )
+               )
              ),
-             mainPanel(
-               h4("Instrucciones"),
-               p("Selecciona Comunidad y métrica en el panel izquierdo. Usa la pestaña 'Tabla de datos' para ver datos en bruto."),
-               verbatimTextOutput("availability_info"),
-               width = 9
+             br(),
+             fluidRow(
+               column(12,
+                      tags$h4("Evolución anual — Paro total (suma en todas las CCAA)"),
+                      plotOutput("plot_paro_total_anual", height = "420px")
+               )
              )
            )
   ),
 
-  tabPanel("Por CCAA (barras)", value = "tab_bar",
-           fluidRow(
-             column(12, h3(textOutput("titulo_grafico1")), p("Evolución anual para la CCAA seleccionada.")),
-             column(12, plotOutput("plot_bar_ccaa", height = "420px"))
-           )
-  ),
-
-  tabPanel("Vista conjunta (Heatmap)", value = "tab_heatmap",
-           fluidRow(
-             column(12, h3(textOutput("titulo_grafico2")), p("Heatmap año × Comunidad.")),
-             column(12, plotOutput("plot_heatmap", height = "600px"))
-           )
-  ),
-
-  tabPanel("Comparativa (líneas)", value = "tab_line",
-           fluidRow(
-             column(12, h3("Comparativa temporal entre CCAA")),
-             column(12, plotOutput("plot_line_ccaa_all", height = "520px"))
-           )
-  ),
-
-  tabPanel("Top / Bottom CCAA", value = "tab_topbottom",
-           fluidRow(
-             column(12, h3("Top 5 y Bottom 5 por media del periodo")),
-             column(6, plotOutput("plot_top5", height = "420px")),
-             column(6, plotOutput("plot_bottom5", height = "420px"))
-           )
-  ),
-
-  tabPanel("Tabla de datos", value = "tab_table",
-           fluidRow(
-             column(12, h3("Datos agregados por CCAA y año")),
-             column(12, DTOutput("dt_data"))
+  tabPanel("Explorar (filtros)",
+           sidebarLayout(
+             sidebarPanel(
+               h4("Filtros"),
+               checkboxGroupInput("metricas_sel", "Métricas (selecciona 1 o varias):",
+                                  choices = c("Población" = "poblacion",
+                                              "Dtes Empleo" = "dtes",
+                                              "Contratos" = "contratos",
+                                              "Paro" = "paro"),
+                                  selected = c("paro")),
+               uiOutput("ui_ccaa_selector"),
+               hr(),
+               actionButton("btn_reset_ccaa", "Restablecer selección"),
+               width = 3
+             ),
+             mainPanel(
+               h4("Resultados"),
+               tabsetPanel(
+                 tabPanel("Gráfica",
+                          p("Serie temporal por la(s) métrica(s) seleccionada(s). Si eliges 'Total' en CCAA, se mostrará la agregación total."),
+                          plotOutput("plot_filtro_timeseries", height = "520px")
+                 ),
+                 tabPanel("Tabla",
+                          DTOutput("tabla_filtrada")
+                 )
+               ),
+               width = 9
+             )
            )
   )
-
 )
 
-# --------------------------------------------------------------------------------------
-# ---------- 4. SERVER ----------
-# --------------------------------------------------------------------------------------
+# ------------------ SERVER ------------------
 server <- function(input, output, session) {
-  source("read_data.R")
 
-  # Exponer la tabla de población como reactive dentro del server
+  # --- Funciones para leer y agregar usando tus utilidades (leer_sepe_csv / normalizar_ccaa / leer_poblacion_csv) ---
+  # lee un fichero procesado con leer_sepe_csv y devuelve NULL si falla
+  safe_leer_sepe <- function(ruta) {
+    if (!file.exists(ruta)) return(NULL)
+    if (exists("leer_sepe_csv") && is.function(leer_sepe_csv)) {
+      tryCatch({
+        df <- leer_sepe_csv(ruta)
+        return(df)
+      }, error = function(e) {
+        message("leer_sepe_csv falló en ", ruta, " : ", e$message)
+        return(NULL)
+      })
+    } else {
+      # fallback: intento leer con read.csv sin procesado
+      tryCatch({
+        df <- read.csv(ruta, stringsAsFactors = FALSE, check.names = FALSE)
+        return(df)
+      }, error = function(e) {
+        message("read.csv también falló en ", ruta, " : ", e$message)
+        return(NULL)
+      })
+    }
+  }
+
+  # Leer poblacion con la función de tu script
   poblacion_df_server <- reactive({
-    get_poblacion_municipio()
+    if (exists("leer_poblacion_csv") && is.function(leer_poblacion_csv)) {
+      # Intentar leer los ficheros de población en data/poblacion* si existen
+      pob_files <- list.files("data/poblacion", pattern = "_processed.csv$|\\.csv$", full.names = TRUE)
+      if (length(pob_files) > 0) {
+        # concatenar todos los ficheros procesados por leer_poblacion_csv
+        dfs <- lapply(pob_files, function(p) {
+          tryCatch(leer_poblacion_csv(p), error = function(e) {
+            message("leer_poblacion_csv falló en ", p, " : ", e$message); NULL
+          })
+        })
+        df_all <- bind_rows(dfs)
+        return(df_all)
+      } else {
+        # si no hay ficheros, intentar una llamada general si existe función que descarga/crea el csv
+        # si no, devolver tibble vacío
+        return(tibble::tibble(anio = integer(), cod_mun = integer(), poblacion = numeric(), comunidad = character()))
+      }
+    } else {
+      return(tibble::tibble(anio = integer(), cod_mun = integer(), poblacion = numeric(), comunidad = character()))
+    }
   })
 
-  agregador_ccaa <- function(df_raw, patrones_busqueda = c("paro", "contrat", "demand", "dtes", "total")) {
+  # Agregador por CCAA que usa normalizar_ccaa() y selecciona la columna numérica adecuada
+  agregador_ccaa_uso_leer <- function(df_raw, patrones_busqueda = c("paro", "contrat", "dtes", "demand", "total")) {
     if (is.null(df_raw) || !is.data.frame(df_raw) || nrow(df_raw) == 0) return(NULL)
 
-    if ("Comunidad Aut" %in% names(df_raw)) {    
-      df_raw$`Comunidad Aut` <- normalizar_ccaa(df_raw$`Comunidad Aut`)
+    # normalizar nombre de la columna comunidad si existe la utilidad
+    # intentamos detectar columna de comunidad con varios nombres posibles
+    col_comun <- names(df_raw)[grepl("comun|comunidad|Comunidad", names(df_raw), ignore.case = TRUE)][1]
+    if (!is.null(col_comun) && !is.na(col_comun)) {
+      if (exists("normalizar_ccaa") && is.function(normalizar_ccaa)) {
+        df_raw[[col_comun]] <- normalizar_ccaa(df_raw[[col_comun]])
+      } else {
+        # trim
+        df_raw[[col_comun]] <- trimws(as.character(df_raw[[col_comun]]))
+      }
+      names(df_raw)[names(df_raw) == col_comun] <- "Comunidad"
     } else {
-      warning("No encontrada la columna 'Comunidad Autónoma' en un fichero.")
+      warning("No encontrada columna de Comunidad en df_raw")
       return(NULL)
     }
 
+    # detectar columna año/codigo mes
+    col_anio <- names(df_raw)[grepl("anio|año|codigo.mes|codigo|mes", names(df_raw), ignore.case = TRUE)][1]
+    if (!is.null(col_anio) && !is.na(col_anio)) {
+      df_raw$anio <- suppressWarnings(as.integer(substr(as.character(df_raw[[col_anio]]), 1, 4)))
+    } else {
+      # intentar usar columna llamada "anio" si existe
+      if ("anio" %in% names(df_raw)) {
+        df_raw$anio <- suppressWarnings(as.integer(df_raw$anio))
+      } else {
+        df_raw$anio <- NA_integer_
+      }
+    }
+
+    # elegir columna numérica candidata según patrones
     numeric_cols <- names(df_raw)[sapply(df_raw, is.numeric)]
-    candidate_cols <- names(df_raw)[sapply(names(df_raw), function(n) {
-      any(vapply(patrones_busqueda, function(p) grepl(p, n, ignore.case = TRUE), logical(1)))
-    }) & names(df_raw) %in% numeric_cols]
+    candidate_cols <- names(df_raw)[sapply(names(df_raw), function(n) any(vapply(patrones_busqueda, function(p) grepl(p, n, ignore.case = TRUE), logical(1)))) & names(df_raw) %in% numeric_cols]
 
     chosen <- NULL
-    if ("total Paro Registrado" %in% candidate_cols) {
+    if ("total Paro Registrado" %in% names(df_raw)) {
       chosen <- "total Paro Registrado"
-    } else if ("Total" %in% candidate_cols) {
+    } else if ("Total" %in% names(df_raw) && "Total" %in% numeric_cols) {
       chosen <- "Total"
     } else if (length(candidate_cols) > 0) {
       chosen <- candidate_cols[1]
@@ -125,313 +210,224 @@ server <- function(input, output, session) {
     }
 
     if (is.null(chosen)) {
-       warning("No se ha podido identificar la columna de valor para agregación.")
-       return(NULL)
-    }
-
-    if (!("anio" %in% names(df_raw))) {
-      warning("No hay columna 'Código mes' para extraer el año; se omite este fichero.")
+      warning("No se ha podido identificar columna numérica para agregación")
       return(NULL)
     }
 
     df_raw %>%
-      mutate(anio = suppressWarnings(as.integer(substr(`anio`, 1, 4)))) %>%
       filter(!is.na(anio)) %>%
-      group_by(anio, comunidad = `Comunidad Aut`) %>%
+      group_by(anio, comunidad = Comunidad) %>%
       summarise(valor = mean(.data[[chosen]], na.rm = TRUE), .groups = "drop")
   }
 
-  safe_read <- function(ruta) {
-    if (!file.exists(ruta)) {
-      message(sprintf("Archivo no encontrado: %s", basename(ruta)))
-      return(NULL)
-    }
-    leer_sepe_csv(ruta)
-  }
-
+  # Datos agregados combinando Paro / Contratos / Dtes usando leer_sepe_csv()
   datos_agregados <- reactive({
     contratos_list <- list()
     paro_list <- list()
     dtes_list <- list()
 
-    withProgress(message = 'Cargando y agregando datos...', value = 0, {
-      n_anios <- length(anios)
-      for (i in seq_along(anios)) {
-        ano <- anios[i]
-        setProgress(i/n_anios, detail = paste("Procesando año", ano))
+    # iterar años y leer los archivos procesados si existen (misma convención de nombres que usas)
+    for (ano in anios) {
+      ruta_contratos <- file.path("data", "contratos", sprintf("Contratos_por_municipios_%s_csv_processed.csv", ano))
+      ruta_paro      <- file.path("data", "paro", sprintf("Paro_por_municipios_%s_csv_processed.csv", ano))
+      ruta_dtes      <- file.path("data", "dtes_empleo", sprintf("Dtes_empleo_por_municipios_%s_csv_processed.csv", ano))
 
-        ruta_contratos <- file.path("data", "contratos", sprintf("Contratos_por_municipios_%s_csv_processed.csv", ano))
-        ruta_paro      <- file.path("data", "paro", sprintf("Paro_por_municipios_%s_csv_processed.csv", ano))
-        ruta_dtes      <- file.path("data", "dtes_empleo", sprintf("Dtes_empleo_por_municipios_%s_csv_processed.csv", ano))
+      # usar safe_leer_sepe (que invoca leer_sepe_csv si existe)
+      df_c <- if (file.exists(ruta_contratos)) safe_leer_sepe(ruta_contratos) else NULL
+      df_p <- if (file.exists(ruta_paro)) safe_leer_sepe(ruta_paro) else NULL
+      df_d <- if (file.exists(ruta_dtes)) safe_leer_sepe(ruta_dtes) else NULL
 
-        df_c <- safe_read(ruta_contratos)
-        
-        if (!is.null(df_c)) {
-          agg_c <- agregador_ccaa(df_c, patrones_busqueda = c("contrat", "contrato", "total"))
-          if (!is.null(agg_c)) contratos_list[[as.character(ano)]] <- agg_c %>% rename(contratos_total = valor)
-        }
-
-        df_p <- safe_read(ruta_paro)
-        if (!is.null(df_p)) {
-          agg_p <- agregador_ccaa(df_p, patrones_busqueda = c("paro", "total"))
-          if (!is.null(agg_p)) paro_list[[as.character(ano)]] <- agg_p %>% rename(paro_total = valor)
-        }
-
-        df_d <- safe_read(ruta_dtes)
-        if (!is.null(df_d)) {
-          agg_d <- agregador_ccaa(df_d, patrones_busqueda = c("demand", "dtes", "demandant", "total"))
-          if (!is.null(agg_d)) dtes_list[[as.character(ano)]] <- agg_d %>% rename(dtes_total = valor)
-        }
+      if (!is.null(df_c)) {
+        agg_c <- agregador_ccaa_uso_leer(df_c, patrones_busqueda = c("contrat", "contrato", "total"))
+        if (!is.null(agg_c)) contratos_list[[as.character(ano)]] <- agg_c %>% rename(contratos_total = valor)
       }
-    })
 
-    contratos_ccaa <- if (length(contratos_list) > 0) bind_rows(contratos_list) else tibble::tibble(anio = integer(), comunidad = factor(), contratos_total = numeric())
-    paro_ccaa_local <- if (length(paro_list) > 0) bind_rows(paro_list) else tibble::tibble(anio = integer(), comunidad = factor(), paro_total = numeric())
-    dtes_ccaa <- if (length(dtes_list) > 0) bind_rows(dtes_list) else tibble::tibble(anio = integer(), comunidad = factor(), dtes_total = numeric())
+      if (!is.null(df_p)) {
+        agg_p <- agregador_ccaa_uso_leer(df_p, patrones_busqueda = c("paro", "total"))
+        if (!is.null(agg_p)) paro_list[[as.character(ano)]] <- agg_p %>% rename(paro_total = valor)
+      }
+
+      if (!is.null(df_d)) {
+        agg_d <- agregador_ccaa_uso_leer(df_d, patrones_busqueda = c("demand", "dtes", "demandant", "total"))
+        if (!is.null(agg_d)) dtes_list[[as.character(ano)]] <- agg_d %>% rename(dtes_total = valor)
+      }
+    }
+
+    contratos_ccaa <- if (length(contratos_list) > 0) bind_rows(contratos_list) else tibble::tibble(anio = integer(), comunidad = character(), contratos_total = numeric())
+    paro_ccaa_local <- if (length(paro_list) > 0) bind_rows(paro_list) else tibble::tibble(anio = integer(), comunidad = character(), paro_total = numeric())
+    dtes_ccaa <- if (length(dtes_list) > 0) bind_rows(dtes_list) else tibble::tibble(anio = integer(), comunidad = character(), dtes_total = numeric())
 
     df_merged <- paro_ccaa_local %>%
       full_join(contratos_ccaa, by = c("anio", "comunidad")) %>%
       full_join(dtes_ccaa, by = c("anio", "comunidad"))
 
+    # normalizar factor y tipos
     if (nrow(df_merged) > 0) {
-        df_merged$comunidad <- as.factor(df_merged$comunidad)
-        df_merged$anio <- as.integer(df_merged$anio)
+      df_merged$comunidad <- as.character(df_merged$comunidad)
+      df_merged$anio <- as.integer(df_merged$anio)
     }
 
     df_merged
   })
 
-  observeEvent(datos_agregados(), {
-      df <- datos_agregados()
-      ccaa_choices <- sort(unique(df$comunidad))
+  # ------------------ Portada: indicadores y gráfico ------------------
+  resumen_global <- reactive({
+    df <- datos_agregados()
+    pob <- poblacion_df_server()
 
-      updateSelectInput(
-          session,
-          "ccaa_sel",
-          choices = ccaa_choices,
-          selected = if (length(ccaa_choices) > 0) ccaa_choices[1] else NULL
-      )
+    años_df <- if (nrow(df) > 0) sort(unique(na.omit(df$anio))) else integer(0)
+    años_pob <- if (nrow(pob) > 0) sort(unique(na.omit(pob$anio))) else integer(0)
+    años_all <- sort(unique(c(años_df, años_pob)), decreasing = TRUE)
+    ultimo_anio <- if (length(años_all) > 0) años_all[1] else NA_integer_
 
-      updateCheckboxGroupInput(
-        session,
-        "ccaa_multi",
-        choices = ccaa_choices,
-        selected = if (length(ccaa_choices) > 0) ccaa_choices[1:min(6, length(ccaa_choices))] else NULL
-      )
+    paro_sum <- if (!is.na(ultimo_anio) && "paro_total" %in% names(df)) sum(df$paro_total[df$anio == ultimo_anio], na.rm = TRUE) else NA_real_
+    contratos_sum <- if (!is.na(ultimo_anio) && "contratos_total" %in% names(df)) sum(df$contratos_total[df$anio == ultimo_anio], na.rm = TRUE) else NA_real_
+    dtes_sum <- if (!is.na(ultimo_anio) && "dtes_total" %in% names(df)) sum(df$dtes_total[df$anio == ultimo_anio], na.rm = TRUE) else NA_real_
+    pobl_sum <- if (!is.na(ultimo_anio) && nrow(pob) > 0 && "poblacion" %in% names(pob)) sum(pob$poblacion[pob$anio == ultimo_anio], na.rm = TRUE) else NA_real_
 
-      if (nrow(df) > 0) {
-          anios_presentes <- unique(df$anio)
-          if (length(anios_presentes) > 0) {
-              new_title <- paste("Datos de Empleo SEPE por Comunidad Autónoma (", min(anios_presentes), "–", max(anios_presentes), ")")
-              shinyjs::runjs(paste0("document.title = '", new_title, "';"))
-          }
-      }
+    list(ultimo_anio = ultimo_anio, paro_sum = paro_sum, contratos_sum = contratos_sum, dtes_sum = dtes_sum, pobl_sum = pobl_sum)
   })
 
-  datos_plot <- reactive({
-      df_merged <- datos_agregados()
-      req(!is.null(df_merged))
-      req(nrow(df_merged) > 0)
-
-      metrica_col <- paste0(input$metrica_sel, "_total")
-
-      if (!(metrica_col %in% names(df_merged))) {
-          return(NULL)
-      }
-
-      df_long <- df_merged %>%
-          select(anio, comunidad, valor = !!metrica_col) %>%
-          drop_na(valor)
-
-      df_long
+  output$card_year <- renderText({
+    rg <- resumen_global()
+    if (is.na(rg$ultimo_anio)) "-" else as.character(rg$ultimo_anio)
+  })
+  output$card_paro_total <- renderText({
+    rg <- resumen_global()
+    if (is.na(rg$paro_sum)) "-" else format(round(rg$paro_sum, 0), big.mark = ".", decimal.mark = ",")
+  })
+  output$card_contratos_total <- renderText({
+    rg <- resumen_global()
+    if (is.na(rg$contratos_sum)) "-" else format(round(rg$contratos_sum, 0), big.mark = ".", decimal.mark = ",")
+  })
+  output$card_dtes_total <- renderText({
+    rg <- resumen_global()
+    if (is.na(rg$dtes_sum)) "-" else format(round(rg$dtes_sum, 0), big.mark = ".", decimal.mark = ",")
   })
 
-  titulo_metrica <- reactive({
-      switch(input$metrica_sel,
-             "paro" = "Paro Registrado",
-             "contratos" = "Contratos Registrados",
-             "dtes" = "Demandantes de Empleo",
-             "Métrica Desconocida")
-  })
-
-  # ---- Outputs existentes ----
-  output$titulo_grafico1 <- renderText({ paste("Gráfico 1: Evolución de", titulo_metrica(), "en una CCAA") })
-  output$titulo_grafico2 <- renderText({ paste("Gráfico 2:", titulo_metrica(), "por año y CCAA (vista conjunta)") })
-
-  output$plot_bar_ccaa <- renderPlot({
-    df_long <- datos_plot()
-    req(df_long)
-    req(input$ccaa_sel)
-
-    df_ccaa <- df_long %>%
-      filter(comunidad == input$ccaa_sel) %>%
-      arrange(anio)
-
-    validate(need(nrow(df_ccaa) > 0, paste("No hay datos de", titulo_metrica(), "para la comunidad seleccionada.")))
-
-    df_ccaa$anio_f <- factor(df_ccaa$anio, levels = sort(unique(df_ccaa$anio)))
-
-    ggplot(df_ccaa, aes(x = anio_f, y = valor)) +
-      geom_col(width = 0.7) +
-      geom_text(aes(label = format(round(valor, 0), big.mark = ".", decimal.mark = ",")),
-                position = position_dodge(width = 0.7),
-                vjust = -0.5, size = 3) +
-      labs(x = "Año",
-           y = paste(titulo_metrica(), "(media anual)"),
-           title = paste("Evolución de", titulo_metrica(), "en", input$ccaa_sel)) +
-      scale_y_continuous(expand = expansion(mult = c(0, 0.08)), labels = scales::label_number(big.mark = ".", decimal.mark = ",")) +
-      theme_minimal(base_size = 12) +
-      theme(axis.text.x = element_text(angle = 0, vjust = 0.5), plot.title = element_text(face = "bold"))
-  })
-
-  output$plot_heatmap <- renderPlot({
-    df_long <- datos_plot()
-    req(df_long)
-
-    years_levels <- sort(unique(df_long$anio), decreasing = TRUE)
-    df_long$anio_f <- factor(df_long$anio, levels = years_levels)
-    df_long$comunidad_f <- factor(df_long$comunidad, levels = sort(unique(df_long$comunidad)))
-
-    low_col <- ifelse(input$metrica_sel == "paro", "white", "steelblue1")
-    high_col <- ifelse(input$metrica_sel == "paro", "firebrick", "darkblue")
-
-    ggplot(df_long, aes(x = comunidad_f, y = anio_f, fill = valor)) +
-      geom_tile(color = "white") +
-      scale_fill_gradient(low = low_col, high = high_col, name = paste(titulo_metrica(), "(media anual)")) +
-      labs(x = "Comunidad Aut", y = "Año", title = paste("Distribución de", titulo_metrica(), "por Comunidad Autónoma y año")) +
-      theme_minimal(base_size = 11) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.text.y = element_text(size = 9), plot.title = element_text(face = "bold"), panel.grid = element_blank())
-  })
-
-  # ---- Nueva: comparativa líneas (varias CCAA + media nacional) ----
-  output$plot_line_ccaa_all <- renderPlot({
-    df_long <- datos_plot()
-    req(df_long)
-
-    sel_ccaa <- input$ccaa_multi
-    if (is.null(sel_ccaa) || length(sel_ccaa) == 0) {
-      sel_ccaa <- unique(df_long$comunidad)[1:min(6, length(unique(df_long$comunidad)))]
+  output$plot_paro_total_anual <- renderPlot({
+    df <- datos_agregados()
+    req(!is.null(df))
+    if (!("paro_total" %in% names(df))) {
+      plot.new(); title("No hay datos de 'paro' disponibles para trazar."); return()
     }
-
-    df_sel <- df_long %>% filter(comunidad %in% sel_ccaa)
-
-    # media nacional por año
-    df_media <- df_long %>% group_by(anio) %>% summarise(media_nacional = mean(valor, na.rm = TRUE), .groups = "drop")
-
-    ggplot() +
-      geom_line(data = df_sel, aes(x = anio, y = valor, color = comunidad, group = comunidad), size = 0.9) +
-      geom_point(data = df_sel, aes(x = anio, y = valor, color = comunidad), size = 1.8) +
-      geom_line(data = df_media, aes(x = anio, y = media_nacional), size = 1.05, linetype = "dashed") +
-      geom_point(data = df_media, aes(x = anio, y = media_nacional), size = 2, shape = 21, fill = "white") +
-      labs(x = "Año", y = paste(titulo_metrica(), "(media anual)"), color = "Comunidad", title = paste("Comparativa:", titulo_metrica(), "— CCAA seleccionadas + media nacional")) +
-      scale_x_continuous(breaks = sort(unique(df_long$anio))) +
+    df_sum <- df %>% group_by(anio) %>% summarise(paro_total = sum(paro_total, na.rm = TRUE), .groups = "drop") %>% filter(!is.na(anio)) %>% arrange(anio)
+    validate(need(nrow(df_sum) > 0, "No hay datos de paro por año para mostrar."))
+    ggplot(df_sum, aes(x = anio, y = paro_total)) +
+      geom_point(size = 2) + geom_line(size = 0.8) +
+      geom_text(aes(label = format(round(paro_total, 0), big.mark = ".", decimal.mark = ",")), vjust = -0.7, size = 3) +
+      labs(x = "Año", y = "Paro total (suma)", title = "Paro total por año — Todas las CCAA") +
+      scale_x_continuous(breaks = df_sum$anio) +
       scale_y_continuous(labels = scales::label_number(big.mark = ".", decimal.mark = ",")) +
-      theme_minimal(base_size = 12) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(face = "bold"))
+      theme_minimal()
   })
 
-  # ---- Nueva: Top / Bottom CCAA por media del periodo ----
-  output$plot_top5 <- renderPlot({
-    df_long <- datos_plot()
-    req(df_long)
-
-    resumen <- df_long %>%
-      group_by(comunidad) %>%
-      summarise(media_periodo = mean(valor, na.rm = TRUE), .groups = "drop") %>%
-      arrange(desc(media_periodo))
-
-    top5 <- head(resumen, 5)
-    validate(need(nrow(top5) > 0, "No hay datos para Top 5."))
-
-    ggplot(top5, aes(x = reorder(comunidad, media_periodo), y = media_periodo)) +
-      geom_col() +
-      coord_flip() +
-      labs(x = "", y = paste("Media de", titulo_metrica()), title = "Top 5 CCAA (mayor media en el periodo)") +
-      scale_y_continuous(labels = scales::label_number(big.mark = ".", decimal.mark = ",")) +
-      theme_minimal(base_size = 11) +
-      theme(plot.title = element_text(face = "bold"))
-  })
-
-  output$plot_bottom5 <- renderPlot({
-    df_long <- datos_plot()
-    req(df_long)
-
-    resumen <- df_long %>%
-      group_by(comunidad) %>%
-      summarise(media_periodo = mean(valor, na.rm = TRUE), .groups = "drop") %>%
-      arrange(media_periodo)
-
-    bottom5 <- head(resumen, 5)
-    validate(need(nrow(bottom5) > 0, "No hay datos para Bottom 5."))
-
-    ggplot(bottom5, aes(x = reorder(comunidad, -media_periodo), y = media_periodo)) +
-      geom_col() +
-      coord_flip() +
-      labs(x = "", y = paste("Media de", titulo_metrica()), title = "Bottom 5 CCAA (menor media en el periodo)") +
-      scale_y_continuous(labels = scales::label_number(big.mark = ".", decimal.mark = ",")) +
-      theme_minimal(base_size = 11) +
-      theme(plot.title = element_text(face = "bold"))
-  })
-
-  # ---- Tabla interactiva ----
-  output$dt_data <- renderDT({
+  # ------------------ UI dinámica CCAA ------------------
+  observe({
     df <- datos_agregados()
-    req(df)
-    dt <- df %>% arrange(desc(anio))
-    datatable(dt, options = list(pageLength = 25, searchHighlight = TRUE), rownames = FALSE)
+    ccaa_choices <- sort(unique(na.omit(df$comunidad)))
+    if (length(ccaa_choices) == 0) ccaa_choices <- character(0)
+    ccaa_with_total <- c("Total", ccaa_choices)
+    selected_default <- ccaa_choices
+    updateSelectizeInput(session, "ccaa_multi_sel", choices = ccaa_with_total, selected = selected_default, server = TRUE)
   })
 
-  # --- Info de Carga de Datos (Debug) ---
-  output$availability_info <- renderText({
+  output$ui_ccaa_selector <- renderUI({
     df <- datos_agregados()
-    if (is.null(df) || nrow(df) == 0) {
-      base_msg <- "Error: No se han cargado datos de SEPE. Revisa las rutas de los archivos."
+    ccaa_choices <- sort(unique(na.omit(df$comunidad)))
+    ccaa_with_total <- c("Total", ccaa_choices)
+    selectizeInput("ccaa_multi_sel", "Comunidad(es):", choices = ccaa_with_total,
+                   selected = if (length(ccaa_choices)>0) ccaa_choices else NULL,
+                   multiple = TRUE, options = list(placeholder = "Selecciona CCAA (o Total)"))
+  })
+
+  observeEvent(input$btn_reset_ccaa, {
+    df <- datos_agregados()
+    ccaa_choices <- sort(unique(na.omit(df$comunidad)))
+    updateSelectizeInput(session, "ccaa_multi_sel", selected = ccaa_choices)
+  })
+
+  # ------------------ Filtrado según selección ------------------
+  datos_filtrados <- reactive({
+    df <- datos_agregados()
+    pob <- poblacion_df_server()
+
+    req(!is.null(df))
+    sel_ccaa <- input$ccaa_multi_sel
+    sel_metrics <- input$metricas_sel
+    if (is.null(sel_metrics) || length(sel_metrics) == 0) return(NULL)
+    if (is.null(sel_ccaa) || length(sel_ccaa) == 0) sel_ccaa <- sort(unique(na.omit(df$comunidad)))
+
+    # construir dataset base (paro/contratos/dtes) pivotado
+    df2 <- df %>% mutate(paro = ifelse("paro_total" %in% names(.), paro_total, NA_real_),
+                         contratos = ifelse("contratos_total" %in% names(.), contratos_total, NA_real_),
+                         dtes = ifelse("dtes_total" %in% names(.), dtes_total, NA_real_)) %>%
+      select(anio, comunidad, paro, contratos, dtes) %>%
+      pivot_longer(cols = c("paro","contratos","dtes"), names_to = "metric", values_to = "valor")
+
+    # si "Total" seleccionado, construir filas agregadas por año
+    if ("Total" %in% sel_ccaa) {
+      agg_tot <- df %>% group_by(anio) %>% summarise(paro = sum(paro_total, na.rm = TRUE),
+                                                    contratos = sum(contratos_total, na.rm = TRUE),
+                                                    dtes = sum(dtes_total, na.rm = TRUE),
+                                                    .groups = "drop") %>%
+        mutate(comunidad = "Total") %>%
+        pivot_longer(cols = c("paro","contratos","dtes"), names_to = "metric", values_to = "valor")
+      df_long <- bind_rows(df2 %>% filter(comunidad %in% sel_ccaa & comunidad != "Total"), agg_tot)
     } else {
-      n_ccaa <- length(unique(df$comunidad))
-      sum_paro <- if ("paro_total" %in% names(df)) sum(!is.na(df$paro_total)) else 0
-      sum_contratos <- if ("contratos_total" %in% names(df)) sum(!is.na(df$contratos_total)) else 0
-      sum_dtes <- if ("dtes_total" %in% names(df)) sum(!is.na(df$dtes_total)) else 0
-
-      avg_paro <- if (n_ccaa > 0) sum_paro / n_ccaa else 0
-      avg_contratos <- if (n_ccaa > 0) sum_contratos / n_ccaa else 0
-      avg_dtes <- if (n_ccaa > 0) sum_dtes / n_ccaa else 0
-
-      anios_presentes <- if (nrow(df) > 0) paste(sort(unique(df$anio)), collapse = ", ") else "Ninguno"
-
-      lines <- c()
-      lines <- c(lines, sprintf("Años disponibles: %s", anios_presentes))
-      lines <- c(lines, sprintf("Comunidades autónomas únicas: %d", n_ccaa))
-      lines <- c(lines, sprintf("Paro (registros): %d (≈ %.0f años por CCAA)", sum_paro, avg_paro))
-      lines <- c(lines, sprintf("Contratos (registros): %d (≈ %.0f años por CCAA)", sum_contratos, avg_contratos))
-      lines <- c(lines, sprintf("Demandantes (registros): %d (≈ %.0f años por CCAA)", sum_dtes, avg_dtes))
-
-      base_msg <- paste(lines, collapse = "\n")
+      df_long <- df2 %>% filter(comunidad %in% sel_ccaa)
     }
 
-    # Añadir resumen de población (si está disponible)
-    pob_df <- poblacion_df_server()
-    if (!is.null(pob_df) && nrow(pob_df) > 0) {
-      años_pob <- sort(unique(pob_df$anio))
-      if (length(años_pob) > 0) {
-        año_reciente <- max(años_pob, na.rm = TRUE)
-        pob_reciente <- pob_df %>% filter(anio == año_reciente)
-        n_municipios <- length(unique(pob_reciente$cod_mun))
-        total_pob <- sum(pob_reciente$poblacion, na.rm = TRUE)
-        pobl_lines <- c()
-        pobl_lines <- c(pobl_lines, sprintf("Población: años disponibles: %s", paste(años_pob, collapse = ", ")))
-        pobl_lines <- c(pobl_lines, sprintf("Municipios (año %d): %d", año_reciente, n_municipios))
-        pobl_lines <- c(pobl_lines, sprintf("Población total (año %d): %s", año_reciente, format(total_pob, big.mark = ".", decimal.mark = ",")))
-        base_msg <- paste(base_msg, paste(pobl_lines, collapse = "\n"), sep = "\n\n")
+    # añadir población si se pidió y existe (agregada por comunidad y año)
+    if ("poblacion" %in% sel_metrics && nrow(pob) > 0) {
+      # asumimos que leer_poblacion_csv ya normalizó comunidad si procede
+      pob_agg <- pob %>% group_by(anio, comunidad) %>% summarise(poblacion = sum(poblacion, na.rm = TRUE), .groups = "drop") %>%
+        pivot_longer(cols = "poblacion", names_to = "metric", values_to = "valor")
+      if ("Total" %in% sel_ccaa) {
+        pob_total <- pob %>% group_by(anio) %>% summarise(poblacion = sum(poblacion, na.rm = TRUE), .groups = "drop") %>%
+          mutate(comunidad = "Total") %>% pivot_longer(cols = "poblacion", names_to = "metric", values_to = "valor")
+        pob_bind <- bind_rows(pob_agg, pob_total)
       } else {
-        base_msg <- paste(base_msg, "Población: sin datos disponibles.", sep = "\n\n")
+        pob_bind <- pob_agg
       }
-    } else {
-      base_msg <- paste(base_msg, "Población: sin datos disponibles.", sep = "\n\n")
+      df_long <- bind_rows(df_long, pob_bind)
     }
 
-    base_msg
+    # Filtrar por métricas solicitadas
+    req_metrics <- c()
+    if ("paro" %in% sel_metrics) req_metrics <- c(req_metrics, "paro")
+    if ("contratos" %in% sel_metrics) req_metrics <- c(req_metrics, "contratos")
+    if ("dtes" %in% sel_metrics) req_metrics <- c(req_metrics, "dtes")
+    if ("poblacion" %in% sel_metrics) req_metrics <- c(req_metrics, "poblacion")
+
+    res <- df_long %>% filter(metric %in% req_metrics)
+    res %>% filter(!is.na(anio)) %>% arrange(metric, comunidad, anio)
   })
 
+  # Plot filtrado
+  output$plot_filtro_timeseries <- renderPlot({
+    df <- datos_filtrados()
+    req(!is.null(df) && nrow(df) > 0)
+    ggplot(df, aes(x = anio, y = valor, color = comunidad, group = comunidad)) +
+      geom_line(size = 0.9) + geom_point(size = 1.6) +
+      facet_wrap(~metric, scales = "free_y", ncol = 1, labeller = as_labeller(c(paro = "Paro", contratos = "Contratos", dtes = "Demandantes", poblacion = "Población"))) +
+      labs(x = "Año", y = NULL, color = "Comunidad", title = "Serie temporal — métricas seleccionadas") +
+      theme_minimal(base_size = 12) + theme(legend.position = "bottom", strip.text = element_text(face = "bold"))
+  })
+
+  output$tabla_filtrada <- renderDT({
+    df <- datos_filtrados()
+    if (is.null(df) || nrow(df) == 0) {
+      datatable(data.frame(Mensaje = "No hay datos según la selección"), options = list(dom = 't'), rownames = FALSE)
+    } else {
+      df %>% arrange(metric, comunidad, desc(anio)) %>% datatable(options = list(pageLength = 25, searchHighlight = TRUE), rownames = FALSE)
+    }
+  })
+
+  # Actualizar el título de la pestaña
+  observe({
+    shinyjs::runjs(paste0("document.title = 'SEPE — Resumen (", min(anios), "–", max(anios), ")';"))
+  })
 }
 
 shinyApp(ui = ui, server = server)
